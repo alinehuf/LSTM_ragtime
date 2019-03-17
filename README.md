@@ -4,7 +4,7 @@
 
 * [The Unreasonable Effectiveness of Recurrent Neural Networks](http://karpathy.github.io/2015/05/21/rnn-effectiveness/) (Andrej Karpathy)
 * [How to Generate Music using a LSTM Neural Network in Keras](https://towardsdatascience.com/how-to-generate-music-using-a-lstm-neural-network-in-keras-68786834d4c5) (Sigurður Skúli)
-* [Deep Learning Techniques for Music Generation - A Survey](https://www.researchgate.net/publication/319524552_Deep_Learning_Techniques_for_Music_Generation_-_A_Survey)
+* [Deep Learning Techniques for Music Generation - A Survey](https://www.researchgate.net/publication/319524552_Deep_Learning_Techniques_for_Music_Generation_-_A_Survey) (Jean-Pierre BriotGaëtan HadjeresFrancois PachetFrancois Pachet)
 * [Coursera MOOC on Sequence Models](https://www.coursera.org/learn/nlp-sequence-models/) by Andrew Ng
 
 ## Choix d'un modèle
@@ -76,9 +76,9 @@ Une autre approche à tester est de créer une catégorie par note et de coder u
 
 ### Importation des données
 
-J'ai utilisé comme corpus d'apprentissage pour mon réseau l'ensemble des fichiers MIDI de ragtime de Scott Joplin proposés sur le site [Ragtime Piano MIDI files by Warren Trachtman](http://www.trachtman.org/ragtime/).
+J'ai utilisé comme corpus d'apprentissage pour mon réseau l'ensemble des fichiers MIDI de ragtime de Scott Joplin proposés sur le site [Ragtime Piano MIDI files by Warren Trachtman](http://www.trachtman.org/ragtime/). Le programme va chercher les fichiers MIDI dans le répertoire désigné par `MIDI_CORPUS_DIRECTORY`.
 
-Pour traiter les fichiers MIDI, j'ai utilisé le module [http://web.mit.edu/music21/](music21) de Python. Chaque fichier MIDI est parsé et toutes les pistes (deux pistes pour le piano) sont "aplaties" en un seul ensemble d'informations contenant les notes et accords du morceau.
+Pour traiter les fichiers MIDI, j'ai utilisé le module [http://web.mit.edu/music21/](music21) de Python. Chaque fichier MIDI est parsé et toutes les pistes (deux pistes pour le piano) sont "aplaties" en un seul ensemble d'informations contenant toutes les notes et accords du morceau.
 ```
         midi = m21.converter.parse(file) # parse
         midiflat = midi.flat             # all infos in a flat structure
@@ -90,17 +90,21 @@ Si je décompose les accords en notes, c'est dans l'idée de pouvoir tester plus
 
 ### Extraction du vocabulaire et conversion en listes d'index
 
-A chaque temps `t` ou offset, plusieurs notes peuvent être jouées ensembles (accord + note de la mélodie). Comme le suggère Sigurður Skúli, j'inspecte les notes extraites des fichiers MIDI pour identifier l’intervalle de temps le plus courant entre les notes de mon corpus. Cet intervalle est 0.25, ce qui correspond à une double croche.
-Je partitionne donc la liste des notes en fonction de chaque offset par pas de 0.25. Chacun de ces ensembles de notes constituera un "élément" du vocabulaire disponible pour générer de la musique. Comme les musiques peuvent contenir des silences, l'ensemble vide fait également partie du vocabulaire.
+A chaque temps `t` ou offset, plusieurs notes peuvent être jouées ensembles (accord + note de la mélodie). Comme le suggère Sigurður Skúli, j'inspecte les notes extraites des fichiers MIDI pour identifier l’intervalle de temps le plus courant entre les notes de mon corpus. Cet intervalle est 0.25, ce qui correspond à une double croche. Je partitionne donc la liste des notes en fonction de chaque offset par pas de 0.25. Le pas est stocké dans la variable globale `OFFSET_STEP`, ce qui permet facilement de la modifier en fonction du corpus. Le cas échéant, les notes dont l'offset n'est pas multiple de OFFSET_STEP sont "décalées" dans le temps. Ces modification sont négligeables et n'altèrent pas la musique de manière significative.
+Chacun des ensembles de notes extraits constitue un "élément" du vocabulaire disponible pour générer de la musique. Comme les musiques peuvent contenir des silences, l'ensemble vide fait également partie du vocabulaire.
 
 La fonction  `notes_to_dict(file2notes)` récupère chacun de ces élément de vocabulaire dans une liste et transforme le dictionnaire `file2notes` précédent en faisant correspondre à chaque fichier une liste d'index qui représentent les éléments de la musique. La fonction retourne le vocabulaire `vocab` et le dictionnaire modifié `file2elmt`.
 
 Pour éviter de recalculer ces éléments à chaque fois, `file2notes` est enregistré dans le fichier désigné par NOTES_FILE, et `vocab` et `file2elmt`sont enregistré dans le fichier désigné par VOCAB_FILE grâce au module [pickle](https://docs.python.org/3/library/pickle.html) de Python.
 
+### Préparation des séquences pour entraîner le réseau
 
+Les différents morceaux de musique représentés par des listes d'index sont découpés en séquences de notes dont la longueur est définie par `SEQ_LENGTH`.
+Après quelques tests, j'ai pu constater qu'entraîner le réseau avec des séquences longues (SEQ_LENGTH=32 équivalent à 4 mesures à 2 temps) encourage le réseau à générer ensuite de longues séquences "plagiées" dans le corpus. Tandis que des séquences plus courtes (SEQ_LENGTH=8 équivalent à 1 seule mesure) permettent de diminuer cet effet.
 
+La fonction `prepare_sequences(file2elmt, n_vocab)` reçoit le dictionnaire `file2elmt` ainsi que la taille du vocabulaire. Elle découpe chaque liste d'index en séquences et chaque index d'une séquence est converti en vecteur one-hot. La fonction retourne l'ensemble des séquences encodées sous forme de vecteurs (variable X) et les sorties attendues qui correspondent aux mêmes séquences décalées d'un temps `t`.
 
-
+Les séquences produites ici se recoupent. Dans l'exemple proposé par Andrew Ng dans son cours, les séquences utilisées pour entraîner le réseau sont tirées au hasard dans l'ensemble du corpus. Ne pas utiliser toutes les séquences doit permettre d'éviter que le réseau ne sur-apprenne les morceaux du corpus et ne produise trop de plagiat. Igurður Skúli de son côté utilise toutes les séquences, mais son réseau possède différents couches dropout qui doivent permettre d'éviter également le problème de sur-apprentissage.
 
 
 
