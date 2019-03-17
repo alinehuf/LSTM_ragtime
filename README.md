@@ -30,6 +30,7 @@ Le modèle proposé dans le cours de Andrew Ng étant prévu pour un usage péda
        ↑
       x<t>
 ```
+`x<t>` représente la donnée d'entrée au temps `t`, `ŷ<t>` est la sortie prédite par le réseau. `a<t>` correspond à l'activation de la cellule LSTM ré-injectée au temps `t+1` et `c<t>` correspond au contenu de la cellule mémoire permettant d'apprendre des dépendances à long terme à l'intérieur d'une séquence.
 
 Si on déplie le modèle, à chaque temps `t`, il doit prédire la note suivante `x<t+1>`. La musique est découpée en "notes" et le modèle est entraîné à l'aide d'un ensemble de séquences extraites du corpus.
 
@@ -67,11 +68,11 @@ Pour générer une séquence de notes, une première note est proposée au modè
       x<t>  <------------------------┘
 ```
 
-## Préparation des données
+## Préparation des données (Import/Export)
 
 Dans des pièces pour piano, plusieurs notes peuvent être jouées ensembles à chaque temps `t`. Igurður Skúli comme Andrew Ng, proposent de créer un dictionnaire de toutes les notes ou accords pouvant apparaître dans leur corpus à chaque temps `t`. Chaque élément (note ou accord) est alors représenté par un index qui constitue une catégorie. Leur réseau est donc chargé de résoudre un problème de régression logistique qui consiste à prédire une catégorie en sortie (note ou accord suivant) en fonction d'une autre catégorie en entrée (note ou accord courant).
 
-J'ai ici fait le choix de créer moi aussi une catégorie unique pour chaque élément (ensemble de note) pouvant être joué à un instant t. Pour fournir cette donnée au réseau, elle est représentée par un vecteur binaire dont tous les bits sont à 0 sauf un dont la valeur 1 représente la catégorie (one-hot-encoding).
+J'ai fait le choix de créer moi aussi une catégorie unique pour chaque élément (ensemble de note) pouvant être joué à un instant t. Pour fournir cette donnée au réseau, elle est représentée par un vecteur binaire dont tous les bits sont à 0 sauf un dont la valeur 1 représente la catégorie (one-hot-encoding).
 Une autre approche à tester est de créer une catégorie par note et de coder une donnée à un instant t par un vecteur dont plusieurs bits sont à 1, un pour chaque note jouée (multi-hot-encoding). cf. [Guide to multi-class multi-label classification with neural networks in python](https://www.depends-on-the-definition.com/guide-to-multi-label-classification-with-neural-networks/).
 
 ### Importation des données
@@ -105,6 +106,84 @@ Après quelques tests, j'ai pu constater qu'entraîner le réseau avec des séqu
 La fonction `prepare_sequences(file2elmt, n_vocab)` reçoit le dictionnaire `file2elmt` ainsi que la taille du vocabulaire. Elle découpe chaque liste d'index en séquences et chaque index d'une séquence est converti en vecteur one-hot. La fonction retourne l'ensemble des séquences encodées sous forme de vecteurs (variable X) et les sorties attendues qui correspondent aux mêmes séquences décalées d'un temps `t`.
 
 Les séquences produites ici se recoupent. Dans l'exemple proposé par Andrew Ng dans son cours, les séquences utilisées pour entraîner le réseau sont tirées au hasard dans l'ensemble du corpus. Ne pas utiliser toutes les séquences doit permettre d'éviter que le réseau ne sur-apprenne les morceaux du corpus et ne produise trop de plagiat. Igurður Skúli de son côté utilise toutes les séquences, mais son réseau possède différents couches dropout qui doivent permettre d'éviter également le problème de sur-apprentissage.
+
+### Conversion inverse: liste d'index vers fichier MIDI
+
+La fonction `create_midi_stream(prediction_output, vocab)` permet de faire la conversion inverse. A partir d'une liste d'index (`prediction_output`) générée par le réseau et du vocabulaire utilisé (`vocab`), elle reconstitue un ensemble de notes et retourne un flux MIDI (`music21.stream.Stream`) qu'il est ensuite possible d'enregistrer dans un fichier.
+
+## Création du modèle pour l'apprentissage
+
+La fonction `create_model(n_vocab)` permet de créer le modèle d'après l'exemple donné dans le cours de Andrew Ng. Pour récupérer la sortie (prédiction) à chaque temps t, le réseau est créé avec une boucle pour itérer sur chaque élément de la séquence.
+
+Les couches LSTM et_softmax_(Dense) sont créés une fois pour toutes pour être réutilisées à chaque étape:
+```
+    LSTM_cell = LSTM(HIDDEN_SIZE, return_state = True)
+    densor = Dense(n_vocab, activation='softmax')
+```
+`HIDDEN_SIZE` est une variable globale définissant le nombre de neurones dans la couche cachée.
+
+A chaque étape, le temps `t` est extrait de l'ensemble des données d'entraînement X et remit au bon format avec `reshapor = Reshape((1, n_vocab))`.
+Une itération de la cellule LSTM est calculée et son activation `a` est ajoutée à la liste des sorties `outputs`.
+Le modèle utilise une optimisation _Adam_ qui associe _momentum_ (évite les oscillations des poids du réseau et accélère la descente de gradient) et _RMSprop_ (augmente la descente dans le "bon" sens et la réduit dans le sens des oscillations). Le coût est évalué avec `categorical_crossentropy`, choix classique dans le cas d'un problème de régression logistique multi-catégories.
+
+```
+    outputs = []
+    for t in range(SEQ_LENGTH):
+        x = Lambda(lambda x: X[:,t,:])(X)
+        x = reshapor(x)
+        a, _, c = LSTM_cell(x, initial_state=[a, c])
+        out = densor(a)
+        outputs.append(out)
+    model = Model(inputs=[X, a0, c0], outputs=outputs)
+    opt = Adam(lr=0.01, beta_1=0.9, beta_2=0.999, decay=0.01)
+    model.compile(optimizer=opt, loss='categorical_crossentropy', metrics=['accuracy'])
+```
+
+## Entraînement du modèle
+
+La fonction `train(model, X, Y)` initialise `a0` et `c0` avec des vecteurs à 0 et entraîne le réseau avec les données préparée dans `X` et `Y`. Afin de ne pas perdre le résultat de l'entraînement s'il est nécessaire d’interrompre les calculs, comme Sigurður Skúli, j'ai utilisé un `ModelCheckpoint` qui permet de sauvegarder les poids du modèle à la fin de chaque "epoch" (quand la performance du réseau s'améliore).
+
+Le modèle est entraîné pendant un nombre d'époques défini dans `NB_EPOCHS`.
+Les données sont découpées en mini-batch (`batch_size=64`) et sont mélangées (`shuffle=True`) pour éviter que la similarité des séquences successives n'aient un effet néfaste sur l'apprentissage.
+
+## Création du modèle pour l'inférence
+
+Pour générer la musique, il est nécessaire de modifier légèrement le modèle. Cette fois, au temps `t+1`, ce n'est pas le "vrai" élément suivant `x<t+1>` qui est donné au modèle mais le résultat de la prédiction `ŷ<t>`.
+
+La sortie `ŷ<t>` fournie par la couche _softmax_ correspond à une distribution de probabilités sur l'ensemble des catégories. La somme des probabilités est 1. Si la prédiction était parfaite, seule la vrai catégorie obtiendrait une probabilité de 1 et toutes les autres 0. Andrew Ng propose d'extraire l'élément le plus probable avec la fonction `argmax` puis de re-soumettre cet élément en entrée du réseau, sous forme de vecteur one-hot, au temps t+1.
+
+```
+def one_hot(x, n_vocab):
+    idx = K.argmax(x)             # index with max proba
+    x = tf.one_hot(idx, n_vocab)  # one-hot encoding
+    x = RepeatVector(1)(x)        # reshape input
+    return x
+```
+
+La boucle utilisée pour créer le modèle ressemble donc à cela:
+```
+    for t in range(Ty):
+        a, _, c = LSTM_cell(x, initial_state=[a, c])
+        out = densor(a)
+        outputs.append(out)
+        x = Lambda(lambda x: one_hot(x, n_vocab))(out)
+```
+L'entrée `x` est traitée par la couche LSTM puis l'activation `a` est passée à la couche _softmax_ pour produire la sortie `out`. la fonction `one_hot(x, n_vocab)` est appliquée à la sortie via une couche spéciale `Lambda` pour produire l'entrée `x` de l'itération suivante.
+
+La fonction `predict_and_sample(inference_model, x_init, a_init, c_init)` permet de générer une séquence de notes avec le modèle d'inférence à partir de valeurs initiales pour `x`, `a`, et `c`.
+
+
+Comme la prédiction est déterministe (même entrée, même sortie), le modèle a tendance à générer des boucles à la manière d'un disque vinyle rayé. Pour éviter cela, dans `predict_and_sample2()` j'ai créé un modèle pour l'inférence réduit à une seul temps `t`, ce qui me permet pour chaque entrée de récupérer la distribution de probabilités générée en sortie. Au lieu de choisir systématiquement l'élément suivant le plus probable, je choisis parfois l'élément suivant au hasard en fonction de la distribution de probabilités.
+
+
+
+
+
+
+
+
+
+
 
 
 

@@ -124,11 +124,11 @@ def prepare_sequences(file2elmt, n_vocab):
         each offset is considered a multiple of OFFSET_STEP (or is rounded)
     Arguments:
     file2elmt -- file2notes with the notes grouped for each timestep and offset information removed.
-    n_vocab -- number of uniq elementsin the vocabulary.
+    n_vocab -- number of uniq elements in the vocabulary.
 
     Returns:
-    Y -- network outputs
-    X -- network inputs (n_sequences, SEQ_LENGTH, n_vocab) shifted by one
+    X -- network inputs (n_sequences, SEQ_LENGTH, n_vocab)
+    Y -- network outputs (SEQ_LENGTH, n_sequences, n_vocab) shifted by one
     """
     X = []
     Y = []
@@ -144,7 +144,6 @@ def prepare_sequences(file2elmt, n_vocab):
     return np.array(X),np.array(Y)
 
 def create_midi_stream(prediction_output, vocab):
-    #print(prediction_output)
     """ convert the output from the prediction to notes and create a midi file
         from the notes """
     offset = 0
@@ -172,7 +171,6 @@ def create_midi_stream(prediction_output, vocab):
                 new_note.offset = offset
                 new_note.storedInstrument = m21.instrument.Piano()
                 output_notes.append(new_note)
-            #print(output_notes[-1])
         # increase offset each iteration so that notes do not stack
         offset += OFFSET_STEP
     midi_stream = m21.stream.Stream(output_notes)
@@ -184,13 +182,6 @@ def create_midi_stream(prediction_output, vocab):
 def create_model(n_vocab):
     """
     create the structure of the neural network
-
-    Arguments:
-    X -- inputs corpus
-    n_vocab -- number of unique values in the music data
-
-    Returns:
-    model -- a keras model
     """
 
     reshapor = Reshape((1, n_vocab))
