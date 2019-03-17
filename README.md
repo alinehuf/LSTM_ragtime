@@ -14,7 +14,7 @@ Les exemples de musiques obtenues par Igurður Skúli semblent intéressants, ce
 
 Le modèle proposé dans le cours de Andrew Ng étant prévu pour un usage pédagogique, il présente l'avantage d'être plus simple, plus rapide à entraîner et les résultats sont plus facilement reproductibles. J'ai donc choisi de partir de ce modèle.
 
-'''
+```
       ŷ<t>
        ↑
    ┌───────┐
@@ -28,6 +28,6 @@ Le modèle proposé dans le cours de Andrew Ng étant prévu pour un usage péda
      └────┘
        ↑
       x<t>
-'''
+```
 
 
