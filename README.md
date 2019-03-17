@@ -29,3 +29,5 @@ Le modèle proposé dans le cours de Andrew Ng étant prévu pour un usage péda
        ↑
       x<t>
 '''
+
+
