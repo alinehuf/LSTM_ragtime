@@ -85,7 +85,7 @@ Pour traiter les fichiers MIDI, j'ai utilisé le module [http://web.mit.edu/musi
         midiflat = midi.flat             # all infos in a flat structure
 ```
 Pour chaque note, je récupère sa hauteur (`nameWithOctave`), sa durée par rapport à une noire (`duration.quarterLength`, croche=0.5, double=0.25, etc...) et l'instant ou la note est jouée (`offset`). Pour les accords, je récupère la hauteur des différentes notes jouées (`pitches`) ainsi que la durée et l'offset. Je récupère ainsi un ensemble de notes.
-La fonction `get_notes(directory)` retourne donc un dictionnaire `file2notes`faisant correspondre à chaque fichier MIDI extrait du répertoire `directory` la liste des notes sous la forme [offset, hauteur, durée].
+La fonction `get_notes()` retourne donc un dictionnaire `file2notes`faisant correspondre à chaque fichier MIDI extrait du répertoire `MIDI_CORPUS_DIRECTORY`la liste des notes sous la forme [offset, hauteur, durée].
 
 Si je décompose les accords en notes, c'est dans l'idée de pouvoir tester plus tard le _multi-hot-encoding_.
 
@@ -94,7 +94,7 @@ Si je décompose les accords en notes, c'est dans l'idée de pouvoir tester plus
 A chaque temps `t` ou offset, plusieurs notes peuvent être jouées ensembles (accord + note de la mélodie). Comme le suggère Sigurður Skúli, j'inspecte les notes extraites des fichiers MIDI pour identifier l’intervalle de temps le plus courant entre les notes de mon corpus. Cet intervalle est 0.25, ce qui correspond à une double croche. Je partitionne donc la liste des notes en fonction de chaque offset par pas de 0.25. Le pas est stocké dans la variable globale `OFFSET_STEP`, ce qui permet facilement de la modifier en fonction du corpus. Le cas échéant, les notes dont l'offset n'est pas multiple de OFFSET_STEP sont "décalées" dans le temps. Ces modification sont négligeables et n'altèrent pas la musique de manière significative.
 Chacun des ensembles de notes extraits constitue un "élément" du vocabulaire disponible pour générer de la musique. Comme les musiques peuvent contenir des silences, l'ensemble vide fait également partie du vocabulaire.
 
-La fonction  `notes_to_dict(file2notes)` récupère chacun de ces élément de vocabulaire dans une liste et transforme le dictionnaire `file2notes` précédent en faisant correspondre à chaque fichier une liste d'index qui représentent les éléments de la musique. La fonction retourne le vocabulaire `vocab` et le dictionnaire modifié `file2elmt`.
+La fonction  `notes_to_dict()` récupère chacun de ces élément de vocabulaire dans une liste et transforme le dictionnaire `file2notes` précédent en faisant correspondre à chaque fichier une liste d'index qui représentent les éléments de la musique. La fonction retourne le vocabulaire `vocab` et le dictionnaire modifié `file2elmt`.
 
 Pour éviter de recalculer ces éléments à chaque fois, `file2notes` est enregistré dans le fichier désigné par NOTES_FILE, et `vocab` et `file2elmt`sont enregistré dans le fichier désigné par VOCAB_FILE grâce au module [pickle](https://docs.python.org/3/library/pickle.html) de Python.
 
@@ -120,9 +120,9 @@ Les couches LSTM et_softmax_(Dense) sont créés une fois pour toutes pour être
     LSTM_cell = LSTM(HIDDEN_SIZE, return_state = True)
     densor = Dense(n_vocab, activation='softmax')
 ```
-`HIDDEN_SIZE` est une variable globale définissant le nombre de neurones dans la couche cachée.
+`HIDDEN_SIZE` est une variable globale définissant le nombre de neurones dans la couche cachée. Ces deux couches sont enregistrées dans le fichier `LAYERS_FILE`, à l'aide du module pickle de Python, afin d'être réutilisées plus tard dans le modèle d'inférence utilisé pour générer la musique.
 
-A chaque étape, le temps `t` est extrait de l'ensemble des données d'entraînement X et remit au bon format avec `reshapor = Reshape((1, n_vocab))`.
+A chaque étape, l'élément au temps `t` est extrait de l'ensemble des données d'entraînement X et remit au bon format avec `reshapor = Reshape((1, n_vocab))`.
 Une itération de la cellule LSTM est calculée et son activation `a` est ajoutée à la liste des sorties `outputs`.
 Le modèle utilise une optimisation _Adam_ qui associe _momentum_ (évite les oscillations des poids du réseau et accélère la descente de gradient) et _RMSprop_ (augmente la descente dans le "bon" sens et la réduit dans le sens des oscillations). Le coût est évalué avec `categorical_crossentropy`, choix classique dans le cas d'un problème de régression logistique multi-catégories.
 

@@ -17,7 +17,7 @@ import keras.backend as K
 import matplotlib.pyplot as plt
 
 # directory where is the midi file corpus
-MIDI_CORPUS_DIRECTORY = "joplin"
+MIDI_CORPUS_DIRECTORY = "joplinC"
 # file name to save precomputed notes (notes extracted from midi file corpus)
 NOTES_FILE = "data/notes"
 # file name to save precomputed sequences (to train the network)
@@ -382,15 +382,21 @@ def predict_and_sample2(LSTM_cell, densor, n_vocab, x_init, Ty = 100):
         pred = inference_model.predict([x, a_init, c_init])
         # Convert "pred" into an np.array() of indices with the maximum proba
         res = np.array(pred)[0] # first note of a sequence of 1 note
-        choice = np.random.choice(range(n_vocab), p = res.ravel())
-        r = np.random.randint(0,RAND_TIME)
-        print(choice, np.argmax(res), r != 0)
-        if r != 0:
-            choice = np.argmax(res)
+        # choice = np.random.choice(range(n_vocab), p = res.ravel())
+        # r = np.random.randint(0,RAND_TIME)
+        # print(choice, np.argmax(res), r != 0)
+        # if r != 0:
+        #     choice = np.argmax(res)
+        # indexes.append(choice)
+        # x = np.zeros((1, 1, n_vocab))
+        # x[0][0][choice] = 1
+        choice = np.argmax(res)
+        # if last 4 notes are repeated identically 2 times
+        if len(indexes) > 7 and indexes[-3:] + [choice] == indexes[-7:-3]:
+            choice = np.random.choice(range(n_vocab), p = res.ravel())
         indexes.append(choice)
         x = np.zeros((1, 1, n_vocab))
         x[0][0][choice] = 1
-
     return indexes
 
 # https://www.kaggle.com/danbrice/keras-plot-history-full-report-and-grid-search
