@@ -2,7 +2,7 @@
 """ This module prepares midi file data and feeds it to the neural
     network for training """
 
-from sys import argv
+from sys import argv, exit
 import glob
 import music21 as m21
 import pickle
@@ -22,12 +22,10 @@ MIDI_CORPUS_DIRECTORY = "joplinC"
 NOTES_FILE = "data/notes"
 # file name to save precomputed sequences (to train the network)
 VOCAB_FILE = "data/vocab"
-# file name to save layers of the model
-LAYERS_FILE = "data/layers"
 # file name format to save pretrained network weights
 WEIGHT_FILE_FMT = "weight/weights-improvement-{epoch:02d}-{loss:.4f}.hdf5"
 # file name to load pretrained network weights
-WEIGHT_FILE = "weight/weights-improvement-200-18.9266.hdf5"
+WEIGHT_FILE = "weight/weights-improvement-200-18.9438.hdf5"
 
 # offset variation from one note to the next (1=quarter, 0.25=16th note)
 OFFSET_STEP = 0.25
@@ -204,14 +202,16 @@ def create_midi_stream(prediction_output, vocab):
 
 ################## NETWORK MODEL TO LEARN AND GENERATE MUSIC ###################
 
-def create_model(n_vocab):
+def create_layers():
+    LSTM_cell = LSTM(HIDDEN_SIZE, return_state = True)
+    densor = Dense(n_vocab, activation='softmax')
+    return LSTM_cell, densor
+
+def create_model(n_vocab, LSTM_cell, densor):
     """
     create the structure of the neural network
     """
-
     reshapor = Reshape((1, n_vocab))
-    LSTM_cell = LSTM(HIDDEN_SIZE, return_state = True)
-    densor = Dense(n_vocab, activation='softmax')
 
     # Define the input of your model with a shape
     X = Input(shape=(SEQ_LENGTH, n_vocab))
@@ -245,8 +245,7 @@ def create_model(n_vocab):
     # We will use Adam and a categorical cross-entropy loss.
     opt = Adam(lr=0.01, beta_1=0.9, beta_2=0.999, decay=0.01)
     model.compile(optimizer=opt, loss='categorical_crossentropy', metrics=['accuracy'])
-
-    return model, densor, LSTM_cell
+    return model
 
 
 def train(model, X, Y):
@@ -452,7 +451,8 @@ if __name__ == '__main__':
 
             # create the network model
             print("Create the lstm network")
-            (model, densor, LSTM_cell) = create_model(n_vocab)
+            LSTM_cell, densor = create_layers()
+            model = create_model(n_vocab, LSTM_cell, densor)
             try:
                 # try to load pre-trained weight from a previous IDENTICAL model
                 # (using same data)
@@ -463,8 +463,6 @@ if __name__ == '__main__':
 
             print("Train the lstm network for %d epochs" % NB_EPOCHS)
             history = train(model, X, Y)
-            with open(LAYERS_FILE, 'wb') as filepath:
-                pickle.dump((densor, LSTM_cell), filepath)
             print("Plot loss history")
             plot_history(history)
         else:
@@ -478,13 +476,13 @@ if __name__ == '__main__':
                     (vocab, _) = pickle.load(filepath)
                 n_vocab = len(vocab)
                 print("Create a model to generate some music")
-                with open(LAYERS_FILE, 'rb') as filepath:
-                    (densor, LSTM_cell) = pickle.load(filepath)
+                LSTM_cell, densor = create_layers()
                 inf_model = music_inference_model(LSTM_cell, densor, n_vocab, GEN_LENGTH)
-                print("Load weights from the pretrained model: %s" % WEIGHT_FILE)
-                model.load_weights(WEIGHT_FILE)
+                print("Load weights from the pretrained model: %s"% WEIGHT_FILE)
+                inf_model.load_weights(WEIGHT_FILE)
             except:
                 print("Missing informations... try to train the network first")
+                exit(1)
 
             print("Generate some music")
             x_init = np.zeros((1, 1, n_vocab))
