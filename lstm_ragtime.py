@@ -39,10 +39,6 @@ NB_EPOCHS = 200
 # length of music generated
 GEN_LENGTH = 500
 
-# 1/RAND_TIME next note is chosen according to probabilities distribution
-# instead of using argmax
-RAND_TIME = 5
-
 ################## MIDI FILE IMPORT / EXPORT ###################################
 
 def get_notes():
@@ -354,6 +350,13 @@ def predict_and_sample(inference_model, x_init, a_init, c_init):
     idx = [i[0] for i in idx]
     return idx
 
+
+def repeat(indexes):
+    for i in range(GEN_LENGTH):
+        if indexes[-i:] == indexes[-2*i:-i]:
+            return True
+    return False
+
 def predict_and_sample2(LSTM_cell, densor, n_vocab, x_init, Ty = 100):
     """
     Predicts the next value of values using the inference model
@@ -369,29 +372,22 @@ def predict_and_sample2(LSTM_cell, densor, n_vocab, x_init, Ty = 100):
     # Perform one step of LSTM_cell
     a, _, c = LSTM_cell(x, initial_state=[a, c])
     # Apply Dense layer to the hidden state output of the LSTM_cell
-    output = densor(a)
+    out = densor(a)
+    output = [out, a, c]
     # Create model instance
     inference_model = Model(inputs=[x0, a0, c0], outputs=output)
     # Use your inference model to predict an output sequence
     indexes = []
     x = x_init
-    a_init = np.zeros((1, HIDDEN_SIZE))
-    c_init = np.zeros((1, HIDDEN_SIZE))
+    a = np.zeros((1, HIDDEN_SIZE))
+    c = np.zeros((1, HIDDEN_SIZE))
     for t in range(Ty):
-        pred = inference_model.predict([x, a_init, c_init])
+        pred, a, c = inference_model.predict([x, a, c])
         # Convert "pred" into an np.array() of indices with the maximum proba
         res = np.array(pred)[0] # first note of a sequence of 1 note
-        # choice = np.random.choice(range(n_vocab), p = res.ravel())
-        # r = np.random.randint(0,RAND_TIME)
-        # print(choice, np.argmax(res), r != 0)
-        # if r != 0:
-        #     choice = np.argmax(res)
-        # indexes.append(choice)
-        # x = np.zeros((1, 1, n_vocab))
-        # x[0][0][choice] = 1
         choice = np.argmax(res)
-        # if last 4 notes are repeated identically 2 times
-        if len(indexes) > 7 and indexes[-3:] + [choice] == indexes[-7:-3]:
+        # if last notes are repeated identically 2 times
+        if repeat(indexes + [choice]):
             choice = np.random.choice(range(n_vocab), p = res.ravel())
         indexes.append(choice)
         x = np.zeros((1, 1, n_vocab))
@@ -485,29 +481,17 @@ if __name__ == '__main__':
                 exit(1)
 
             print("Generate some music")
-            x_init = np.zeros((1, 1, n_vocab))
-            a_init = np.zeros((1, HIDDEN_SIZE))
-            c_init = np.zeros((1, HIDDEN_SIZE))
-            idx = predict_and_sample(inf_model, x_init, a_init, c_init)
-            midi_stream = create_midi_stream(idx, vocab)
-            midi_stream.write('midi', fp='midi_test_output.mid')
+            for i, idx_init in enumerate([10,20,30]):
+                # generate music with argmax to chose the next note
+                x_init = np.zeros((1, 1, n_vocab))
+                x_init[0][0][idx_init] = 1
+                a_init = np.zeros((1, HIDDEN_SIZE))
+                c_init = np.zeros((1, HIDDEN_SIZE))
+                idx = predict_and_sample(inf_model, x_init, a_init, c_init)
+                midi_stream = create_midi_stream(idx, vocab)
+                midi_stream.write('midi', fp='midi_test_output_%d.mid' % i)
+                # use random choice according to distribution to avoid loops
+                idx = predict_and_sample2(LSTM_cell, densor, n_vocab, x_init, GEN_LENGTH)
+                midi_stream = create_midi_stream(idx, vocab)
+                midi_stream.write('midi', fp='midi_test_output_%d_bis.mid' % i)
 
-            idx = predict_and_sample2(LSTM_cell, densor, n_vocab, x_init, GEN_LENGTH)
-            midi_stream = create_midi_stream(idx, vocab)
-            midi_stream.write('midi', fp='midi_test_output4.mid')
-
-            x_init = np.zeros((1, 1, n_vocab))
-            x_init[0][0][len(vocab)/2] = 1
-            a_init = np.zeros((1, HIDDEN_SIZE))
-            c_init = np.zeros((1, HIDDEN_SIZE))
-            idx = predict_and_sample(inf_model, x_init, a_init, c_init)
-            midi_stream = create_midi_stream(idx, vocab)
-            midi_stream.write('midi', fp='midi_test_output2.mid')
-
-            x_init = np.zeros((1, 1, n_vocab))
-            x_init[0][0][len(vocab)/4] = 1
-            a_init = np.zeros((1, HIDDEN_SIZE))
-            c_init = np.zeros((1, HIDDEN_SIZE))
-            idx = predict_and_sample(inf_model, x_init, a_init, c_init)
-            midi_stream = create_midi_stream(idx, vocab)
-            midi_stream.write('midi', fp='midi_test_output3.mid')

@@ -150,7 +150,7 @@ Les données sont découpées en mini-batch (`batch_size=64`) et sont mélangée
 
 Pour générer la musique, il est nécessaire de modifier légèrement le modèle. Cette fois, au temps `t+1`, ce n'est pas le "vrai" élément suivant `x<t+1>` qui est donné au modèle mais le résultat de la prédiction `ŷ<t>`.
 
-La sortie `ŷ<t>` fournie par la couche _softmax_ correspond à une distribution de probabilités sur l'ensemble des catégories. La somme des probabilités est 1. Si la prédiction était parfaite, seule la vrai catégorie obtiendrait une probabilité de 1 et toutes les autres 0. Andrew Ng propose d'extraire l'élément le plus probable avec la fonction `argmax` puis de re-soumettre cet élément en entrée du réseau, sous forme de vecteur one-hot, au temps t+1.
+La sortie `ŷ<t>` fournie par la couche _softmax_ correspond à une distribution de probabilités sur l'ensemble des catégories. La somme des probabilités est 1. Si la prédiction était parfaite, seule la vraie catégorie obtiendrait une probabilité de 1 et toutes les autres 0. Andrew Ng propose d'extraire l'élément le plus probable avec la fonction `argmax` puis de re-soumettre cet élément en entrée du réseau, sous forme de vecteur one-hot, au temps t+1.
 
 ```
 def one_hot(x, n_vocab):
@@ -173,10 +173,17 @@ L'entrée `x` est traitée par la couche LSTM puis l'activation `a` est passée 
 La fonction `predict_and_sample(inference_model, x_init, a_init, c_init)` permet de générer une séquence de notes avec le modèle d'inférence à partir de valeurs initiales pour `x`, `a`, et `c`.
 
 
-Comme la prédiction est déterministe (même entrée, même sortie), le modèle a tendance à générer des boucles à la manière d'un disque vinyle rayé. Pour éviter cela, dans `predict_and_sample2()` j'ai créé un modèle pour l'inférence réduit à une seul temps `t`, ce qui me permet pour chaque entrée de récupérer la distribution de probabilités générée en sortie. Au lieu de choisir systématiquement l'élément suivant le plus probable, je choisis parfois l'élément suivant au hasard en fonction de la distribution de probabilités.
+Comme la prédiction est déterministe (même entrée, même sortie), le modèle a tendance à générer des boucles à la manière d'un disque vinyle rayé. Pour éviter cela, dans `predict_and_sample2()` j'ai créé un modèle pour l'inférence réduit à une seul temps `t`, ce qui me permet pour chaque entrée de récupérer la distribution de probabilités générée en sortie (ainsi que l'activation `a` et le contenu de la mémoire à long terme `c`). Au lieu de choisir systématiquement l'élément suivant le plus probable, si la répétition d'un motif est détectée, je choisis l'élément suivant au hasard en fonction de la distribution de probabilités. Ceci permet de "casser" une éventuelle boucle infinie. Les valeurs de `a` et `c` sont réinjectées à chaque itération pour prédire chaque note en fonction de ce qui précède.
 
+## Résultats
 
+Le modèle, très simple, entraîné sur un corpus assez réduit, réussit a "apprendre" la structure des pièces de ragtime. Le résultat est une sorte de pot pourri mêlant de courts extraits de différentes pièces. J'ai entraîné le modèle pendant 200 _epochs_ ce qui correspond à une dizaine d'heures de calcul.
 
+La longueur des séquences utilisées pour l'apprentissage a une forte influence sur le résultat. Avec des séquences longues, le modèle a tendance à plagier de longues parties des pièces données pour l'apprentissage. Avec des séquences courtes, le résultat est décousu et peu musical. Des séquences équivalent à 2 mesures semblent fournir le meilleur compromis.
+
+Pour générer la musique, il est possible de choisir chaque note de deux manières différentes en fonction du résultat de la couche _softmax_. Soit, la note la plus probable est extraite avec _argmax_, soit la note est choisie au hasard en fonction de la distribution de probabilités. La première approche présente un inconvénient notable dû au déterminisme du modèle : l’apparition de boucles à la manière d'un disque vinyle rayé. La seconde introduit une trop grande dose de hasard qui rend la musique générée peu esthétique. J'ai expérimenté un compromis qui consiste à choisir la note au hasard selon la distribution de probabilités uniquement lorsqu'une répétition est détectée, afin de briser une éventuelle boucle.
+
+Les résultats obtenus sont disponibles dans les fichiers "midi_test_output_X.mid" pour _argmax_ et "midi_test_output_X_bis.mid" pour la version avec prévention des boucles.
 
 
 
