@@ -91,12 +91,14 @@ Si je décompose les accords en notes, c'est dans l'idée de pouvoir tester plus
 
 ### Extraction du vocabulaire et conversion en listes d'index
 
-A chaque temps `t` ou offset, plusieurs notes peuvent être jouées ensembles (accord + note de la mélodie). Comme le suggère Sigurður Skúli, j'inspecte les notes extraites des fichiers MIDI pour identifier l’intervalle de temps le plus courant entre les notes de mon corpus. Cet intervalle est 0.25, ce qui correspond à une double croche. Je partitionne donc la liste des notes en fonction de chaque offset par pas de 0.25. Le pas est stocké dans la variable globale `OFFSET_STEP`, ce qui permet facilement de la modifier en fonction du corpus. Le cas échéant, les notes dont l'offset n'est pas multiple de OFFSET_STEP sont "décalées" dans le temps. Ces modification sont négligeables et n'altèrent pas la musique de manière significative.
-Chacun des ensembles de notes extraits constitue un "élément" du vocabulaire disponible pour générer de la musique. Comme les musiques peuvent contenir des silences, l'ensemble vide fait également partie du vocabulaire.
+A chaque temps `t` ou offset, plusieurs notes peuvent être jouées ensembles (accord + note de la mélodie). Comme le suggère Sigurður Skúli, j'inspecte les notes extraites des fichiers MIDI pour identifier l’intervalle de temps le plus courant entre les notes de mon corpus. Cet intervalle est 0.25, ce qui correspond à une double croche. Je partitionne donc la liste des notes en fonction de chaque offset par pas de 0.25. Le pas est stocké dans la variable globale `OFFSET_STEP`, ce qui permet facilement de la modifier en fonction du corpus. Le cas échéant, les notes dont l'offset n'est pas multiple de OFFSET_STEP sont "décalées" dans le temps. Ces modifications sont négligeables et n'altèrent pas la musique de manière significative.
+Chaque ensemble de notes extrait constitue un "élément" du vocabulaire disponible pour générer de la musique. Comme les musiques peuvent contenir des silences, l'ensemble vide fait également partie du vocabulaire.
 
 La fonction  `notes_to_dict()` récupère chacun de ces élément de vocabulaire dans une liste et transforme le dictionnaire `file2notes` précédent en faisant correspondre à chaque fichier une liste d'index qui représentent les éléments de la musique. La fonction retourne le vocabulaire `vocab` et le dictionnaire modifié `file2elmt`.
 
 Pour éviter de recalculer ces éléments à chaque fois, `file2notes` est enregistré dans le fichier désigné par NOTES_FILE, et `vocab` et `file2elmt`sont enregistré dans le fichier désigné par VOCAB_FILE grâce au module [pickle](https://docs.python.org/3/library/pickle.html) de Python.
+
+Remarque : les notes jouées ensemble sont spécifiques pour une tonalité donnée (Fa majeur, sib mineur, etc...). En considérant chaque ensemble distinct le vocabulaire extrait d'après les ragtimes de Scott Joplin atteint une taille de 6560 termes. En entraînant le modèle avec ces pièces, le risque est de le voir générer un plagiat exact d'une pièce à partir d'un seul accord, si cette pièce est la seule existante dans la tonalité particulière de cet accord. Pour éviter ce biais, j'ai transposé toutes les pièces en Do majeur/La mineur ce qui ramène le vocabulaire à un total de 5924 termes.
 
 ### Préparation des séquences pour entraîner le réseau
 
@@ -185,8 +187,11 @@ Pour générer la musique, il est possible de choisir chaque note de deux maniè
 
 Les résultats obtenus sont disponibles dans les fichiers "midi_test_output_X.mid" pour _argmax_ et "midi_test_output_X_bis.mid" pour la version avec prévention des boucles.
 
+## A tester pour aller plus loin
 
-
+* Utiliser un _embedding_ du vocabulaire avec word2vec ou algorithme équivalent
+* Entraîner le modèle avec un corpus plus important (par exemple l'ensemble des ragtimes du site http://www.trachtman.org/ragtime/)
+* Utiliser un modèle avec _multi-hot encodding_
 
 
 
