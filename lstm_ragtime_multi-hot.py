@@ -2,118 +2,182 @@
 """ This module prepares midi file data and feeds it to the neural
     network for training """
 
+from sys import argv, exit
 import glob
 import music21 as m21
 import pickle
 import numpy as np
+import tensorflow as tf
 from keras.layers import Reshape, LSTM, Dense, Input, Lambda, RepeatVector
 from keras.models import Model
 from keras.optimizers import Adam
 from keras.callbacks import ModelCheckpoint
+from keras.utils import to_categorical
 import keras.backend as K
 import matplotlib.pyplot as plt
 
 # directory where is the midi file corpus
-MIDI_CORPUS_DIRECTORY = "one_joplin"
+MIDI_CORPUS_DIRECTORY = "joplinC"
 # file name to save precomputed notes (notes extracted from midi file corpus)
-NOTES_FILE = "data/notes2"
+NOTES_FILE = "data/notes_mhe"
+# file name to save precomputed sequences (to train the network)
+VOCAB_FILE = "data/vocab_mhe"
+# file name format to save pretrained network weights
+WEIGHT_FILE_FMT = "weight/weights-improvement-{epoch:02d}-{loss:.4f}_mhe.hdf5"
+# file name to load pretrained network weights
+WEIGHT_FILE = "weight/weights-improvement-200-18.9438_mhe.hdf5"
+
 # offset variation from one note to the next (1=quarter, 0.25=16th note)
 OFFSET_STEP = 0.25
 # length of a music sequence
-SEQ_LENGTH = 16
+SEQ_LENGTH = 16    # 2 bar of 2/4
 # size of hidden layer
 HIDDEN_SIZE = 64
 # number of epochs to train the model
-NB_EPOCHS = 100
+NB_EPOCHS = 200
 
-# threashold to consider the note played (1) or not (0)
+# threshold to consider the note played (1) or not (0)
 THRESHOLD = 0.5
-
 # length of music generated
-GEN_LENGTH = 100
+GEN_LENGTH = 500
 
 ################## MIDI FILE IMPORT / EXPORT ###################################
 
-def get_notes(directory):
+def get_notes():
     """ Get all the notes and chords from the midi files in the directory """
     file2notes = {}
-    print(glob.glob(directory + "/*.mid"))
+    try:
+        # try to load notes data pre-extracted from midi files
+        print("Load midi data from %s" % NOTES_FILE)
+        with open(NOTES_FILE, 'rb') as filepath:
+            file2notes = pickle.load(filepath)
+    except:
+        print("Fail !")
+        # load data from midi files and extract notes indormations
+        print("Import data from midi files found in the \"%s/\" directory instead" % MIDI_CORPUS_DIRECTORY)
+        for file in glob.glob(MIDI_CORPUS_DIRECTORY + "/*.mid"):
+            notes = []
+            print("Parsing %s" % file)
 
-    for file in glob.glob(directory + "/*.mid"):
-        notes = []
-        print("Parsing %s" % file)
+            midi = m21.converter.parse(file)
+            # all file infos, notes and chords in a flat structure
+            midiflat = midi.flat
+            for x in midiflat.notes:
+                # a note: get offset (start time), pitch and duration
+                if isinstance(x, m21.note.Note):
+                    notes.append([x.offset, x.pitch.nameWithOctave, x.duration.quarterLength])
+                # decompose a chord in several notes
+                elif isinstance(x, m21.chord.Chord):
+                    notes += [[x.offset, p.nameWithOctave, x.duration.quarterLength] for p in x.pitches]
+                # # debug: show all notes
+                # for n in notes:
+                #     print("offset:%s note:%s duration:%s" % tuple(n))
+            print("-------> done")
+            file2notes[file] = notes
 
-        midi = m21.converter.parse(file)
-        # all file infos, notes and chords in a flat structure
-        midiflat = midi.flat
-        for x in midiflat.notes:
-            # a note: get offset (start time), pitch and duration
-            if isinstance(x, m21.note.Note):
-                notes.append([x.offset, x.pitch.nameWithOctave, x.duration.quarterLength])
-            # decompose a chord in several notes
-            elif isinstance(x, m21.chord.Chord):
-                notes += [[x.offset, p.nameWithOctave, x.duration.quarterLength] for p in x.pitches]
-            # #debug: show all notes
-            # for n in notes:
-            #     print("offset:%s note:%s duration:%s" % tuple(n))
-        print("-------> done")
-        file2notes[file] = notes
+        print("Save data for later use")
+        with open(NOTES_FILE, 'wb') as filepath:
+            pickle.dump(file2notes, filepath)
     return file2notes
 
-def notes_to_dict(file2notes):
-    """ get all uniq notes/duration in the corpus, return a vector of all notes
-        and a dictionnary given the index of each note """
-    allnotes = []
-    for music in file2notes.values():
-        allnotes += [tuple(note[1:]) for note in music]
-    allnotes = sorted(list(set(allnotes)))
-    note2idx = { allnotes[i] : i for i in range(0, len(allnotes) ) }
-    # debug: show the dictionary of all uniq notes with duration
+def notes_to_dict():
+    """
+    At each offset (each timestep), group all notes played together :
+    it becomes an element of vocabulary. Get all vocabulary elements in the corpus.
+    Arguments:
+    file2notes -- a dictionary of each file name and the corresponding list of
+                  notes (offset, pitch, duration)
+    Returns:
+    vocab -- a vector of all elements
+    file2elmt -- file2notes with the notes grouped for each timestep and offset information removed.
+    """
+    vocab = []
+    file2elmt = {}
+    try:
+        # try to use pre-computed data to train the network
+        print("Load vocabulary and music element indexes from %s" % VOCAB_FILE)
+        with open(VOCAB_FILE, 'rb') as filepath:
+            (vocab, file2elmt) = pickle.load(filepath)
+    except:
+        print("Fail !")
+        file2notes = get_notes()
 
-    return allnotes, note2idx
+        print("Convert music into lists of indexes and extract the vocabulary")
+        # get sorted vocabulary
+        for music in file2notes.values():
+            vocab += [tuple(note[1:]) for note in music]
+        vocab = sorted(list(set(vocab)))
+        vocab2idx = { vocab[i] : i for i in range(0, len(vocab) ) }
+        print(vocab)
+        # convert notes data into vector of indexes
+        idx = 0
+        for key, val in file2notes.items():
+            new_val = []
+            elmts = []
+            offset = 0
+            for note in val:
+                # ensure that note offset is a multiple of OFFSET_STEP
+                note_offset = note[0] - (note[0] % OFFSET_STEP)
+                while note_offset != offset:
+                    new_val.append(tuple(elmts))
+                    elmts = []
+                    offset += OFFSET_STEP
+                elmts.append(vocab2idx[tuple(note[1:])])
+            while not new_val[0]: new_val = new_val[1:]
+            while not new_val[-1]: new_val = new_val[:-1]
+            file2elmt[key] = new_val
 
-def prepare_sequences(file2notes, note2idx):
+        print("Save vocabulary for later use")
+        with open(VOCAB_FILE, 'wb') as filepath:
+            pickle.dump((vocab, file2elmt), filepath)
+    return vocab, file2elmt
+
+def element2multihot(elmts, n_vocab):
+    v = [0 for i in range(n_vocab)]
+    for i in elmts: v[i] = 1
+    return v
+
+def prepare_sequences(file2elmt, n_vocab):
     """ convert each sequence of notes into matrix X and Y
         each timestep is a binary vector of len(note2idx) features
         a bit is one if the note/duration is played at timestep t
-        each offset is considered a multiple of OFFSET_STEP (or is rounded)"""
+        each offset is considered a multiple of OFFSET_STEP (or is rounded)
+    Arguments:
+    file2elmt -- file2notes with the notes grouped for each timestep and offset information removed.
+    n_vocab -- number of uniq elements in the vocabulary.
+
+    Returns:
+    X -- network inputs (n_sequences, SEQ_LENGTH, n_vocab)
+    Y -- network outputs (SEQ_LENGTH, n_sequences, n_vocab) shifted by one
+    """
     X = []
     Y = []
-    nul = [[0 for i in range(len(note2idx))]]
-    for music in file2notes.values():
-        # length of the music according to the last offset
-        music_size = int(music[-1][0] / OFFSET_STEP + 1)
-        # prepare a matrix of music_size timesteps,
-        # notes played at offset o are represented as a binary vector
-        music_vecs = [ [0 for i in range(len(note2idx))] \
-                       for j in range(music_size) ]
-        for note in music:
-            offset = int(note[0] / OFFSET_STEP) # corrected offset
-            name = tuple(note[1:])
-            music_vecs[offset][note2idx[name]] = 1
+    for music in file2elmt.values():
+        # prepare a matrix of one_hot vectors
+        music_vecs = [element2multihot(elmts, n_vocab) for elmts in music]
         # cut the music into sequences
-        for i in range(len(music_vecs) - SEQ_LENGTH):
-            X.append(nul + music_vecs[i:i + SEQ_LENGTH - 1])
-            Y.append(music_vecs[i:i + SEQ_LENGTH])
+        for i in range(len(music_vecs) - (SEQ_LENGTH+1)):
+            X.append(music_vecs[i:i + SEQ_LENGTH])
+            Y.append(music_vecs[i+1:i + SEQ_LENGTH+1])
 
     Y = np.swapaxes(Y,0,1)
     return np.array(X),np.array(Y)
 
-def create_midi_stream(prediction_output, allnotes):
+def create_midi_stream(prediction_output, vocab):
     """ convert the output from the prediction to notes and create a midi file
         from the notes """
     offset = 0
     output_notes = []
 
     # create note and chord objects based on the values generated by the model
-    for timestep in prediction_output:
-        notes = np.where(np.array(timestep) > THRESHOLD)[0]
-        if notes.shape[0] != 0:
+    for elmts in prediction_output:
+        notes = [vocab[e] for e in elmts]
+        if len(notes) != 0:
             # a chord
-            if notes.shape[0] > 1:
+            if len(notes) > 1:
                 notes_in_chord = []
                 for current_note in notes:
-                    pitch, duration = allnotes[current_note]
+                    pitch, duration = current_note
                     new_note = m21.note.Note(pitch, quarterLength=duration)
                     new_note.storedInstrument = m21.instrument.Piano()
                     notes_in_chord.append(new_note)
@@ -122,35 +186,29 @@ def create_midi_stream(prediction_output, allnotes):
                 output_notes.append(new_chord)
             # a note
             else:
-                pitch, duration = allnotes[notes[0]]
+                pitch, duration = notes[0]
                 new_note = m21.note.Note(pitch, quarterLength=duration)
                 new_note.offset = offset
                 new_note.storedInstrument = m21.instrument.Piano()
                 output_notes.append(new_note)
-            print(output_notes[-1])
         # increase offset each iteration so that notes do not stack
         offset += OFFSET_STEP
     midi_stream = m21.stream.Stream(output_notes)
 
     return midi_stream
 
-################## MIDI FILE IMPORT / EXPORT ###################################
+################## NETWORK MODEL TO LEARN AND GENERATE MUSIC ###################
 
-def create_model(X, n_vocab):
-    """
-    create the structure of the neural network
-
-    Arguments:
-    X -- inputs corpus
-    n_vocab -- number of unique values in the music data
-
-    Returns:
-    model -- a keras model
-    """
-
-    reshapor = Reshape((1, n_vocab))
+def create_layers():
     LSTM_cell = LSTM(HIDDEN_SIZE, return_state = True)
     densor = Dense(n_vocab, activation='sigmoid')
+    return LSTM_cell, densor
+
+def create_model(n_vocab, LSTM_cell, densor):
+    """
+    create the structure of the neural network
+    """
+    reshapor = Reshape((1, n_vocab))
 
     # Define the input of your model with a shape
     X = Input(shape=(SEQ_LENGTH, n_vocab))
@@ -168,10 +226,12 @@ def create_model(X, n_vocab):
         x = Lambda(lambda x: X[:,t,:])(X)
         # Use reshapor to reshape x to be (1, n_vocab)
         x = reshapor(x)
+        #x = Lambda(lambda x:K.print_tensor(x, message='x = '))(x)
         # Perform one step of the LSTM_cell
         a, _, c = LSTM_cell(x, initial_state=[a, c])
         # Apply densor to the hidden state output of LSTM_Cell
         out = densor(a)
+        #out = Lambda(lambda x:K.print_tensor(x, message='out = '))(out)
         # Add the output to "outputs"
         outputs.append(out)
 
@@ -181,9 +241,8 @@ def create_model(X, n_vocab):
     # Compile the model to be trained.
     # We will use Adam and a categorical cross-entropy loss.
     opt = Adam(lr=0.01, beta_1=0.9, beta_2=0.999, decay=0.01)
-    model.compile(optimizer=opt, loss='categorical_crossentropy', metrics=['accuracy'])
-
-    return model, densor, LSTM_cell
+    model.compile(optimizer=opt, loss='binary_crossentropy', metrics=['accuracy'])
+    return model
 
 
 def train(model, X, Y):
@@ -193,33 +252,28 @@ def train(model, X, Y):
     m = X.shape[0] # size of training set
     a0 = np.zeros((m, HIDDEN_SIZE))
     c0 = np.zeros((m, HIDDEN_SIZE))
-
     # # Lets create a checkpoint to save the trained model each time it makes
     # # progress (loss decrease)
-    filepath = "weight/weights-improvement-{epoch:02d}-{loss:.4f}-bigger.hdf5"
     checkpoint = ModelCheckpoint(
-        filepath,
+        WEIGHT_FILE_FMT,
         monitor='loss',
         verbose=0,
         save_best_only=True,
         save_weights_only=True,
         mode='min'
     )
-
     # Lets now fit the model! We will turn `Y` to a list before doing so,
     # since the cost function expects `Y` to be provided in this format
     # (one list item per time-step). So `list(Y)` is a list with SEQ_LENGTH
     # items, where each of the list items is of shape (m,n_vocab).
     # Lets train for NB_EPOCHS epochs. This will take a few minutes.
-    return model.fit([X, a0, c0], list(Y), epochs=NB_EPOCHS, batch_size=64, callbacks=[checkpoint])
+    return model.fit([X, a0, c0], list(Y), epochs=NB_EPOCHS, batch_size=64, callbacks=[checkpoint], shuffle=True)
 
-
-def binary_vec(x):
+def multi_hot(x, n_vocab):
     x = K.greater(x, THRESHOLD)
     x = K.cast(x, "float32")
     x = RepeatVector(1)(x)
     return x
-
 
 def music_inference_model(LSTM_cell, densor, n_vocab, Ty = 100):
     """
@@ -261,8 +315,7 @@ def music_inference_model(LSTM_cell, densor, n_vocab, Ty = 100):
         # Select the next value according to "out", and set "x" to be the
         # representation of the selected value, which will be passed as the
         # input to LSTM_cell on the next step
-        x = Lambda(binary_vec)(out)
-
+        x = Lambda(lambda x: multi_hot(x, n_vocab))(out)
 
     # Create model instance
     inference_model = Model(inputs=[x0, a0, c0], outputs=outputs)
@@ -270,90 +323,172 @@ def music_inference_model(LSTM_cell, densor, n_vocab, Ty = 100):
     return inference_model
 
 
+def predict_and_sample(inference_model, x_init, a_init, c_init):
+    """
+    Predicts the next value of values using the inference model.
+
+    Arguments:
+    inference_model -- Keras model instance for inference time
+    x_initializer -- numpy array of shape (1, 1, SEQ_LENGTH),
+                     one-hot vector initializing the values generation
+    a_initializer -- numpy array of shape (1, n_a),
+                     initializing the hidden state of the LSTM_cell
+    c_initializer -- numpy array of shape (1, n_a),
+                     initializing the cell state of the LSTM_cel
+
+    Returns:
+    idx -- numpy-array of shape (Ty, 1),
+           matrix of indices representing the values generated
+    """
+
+    # Use your inference model to predict an output sequence
+    pred = inference_model.predict([x_init, a_init, c_init])
+    # Convert "pred" into an np.array() of indices lists with proba > THRESHOLD
+    idx = [[i for i,v in enumerate(p) if v] for p in np.greater(pred,THRESHOLD)]
+    return idx
+
+
+# def repeat(indexes):
+#     for i in range(GEN_LENGTH):
+#         if indexes[-i:] == indexes[-2*i:-i]:
+#             return True
+#     return False
+
+# def predict_and_sample2(LSTM_cell, densor, n_vocab, x_init, Ty = 100):
+#     """
+#     Predicts the next value of values using the inference model
+#     and use the inference model to predict an output sequence
+#     """
+#     x0 = Input(shape=(1, n_vocab))
+#     # Define s0, initial hidden state for the decoder LSTM
+#     a0 = Input(shape=(HIDDEN_SIZE,), name='a0')
+#     c0 = Input(shape=(HIDDEN_SIZE,), name='c0')
+#     a = a0
+#     c = c0
+#     x = x0
+#     # Perform one step of LSTM_cell
+#     a, _, c = LSTM_cell(x, initial_state=[a, c])
+#     # Apply Dense layer to the hidden state output of the LSTM_cell
+#     out = densor(a)
+#     output = [out, a, c]
+#     # Create model instance
+#     inference_model = Model(inputs=[x0, a0, c0], outputs=output)
+#     # Use your inference model to predict an output sequence
+#     indexes = []
+#     x = x_init
+#     a = np.zeros((1, HIDDEN_SIZE))
+#     c = np.zeros((1, HIDDEN_SIZE))
+#     for t in range(Ty):
+#         pred, a, c = inference_model.predict([x, a, c])
+#         # Convert "pred" into an np.array() of indices with the maximum proba
+#         res = np.array(pred)[0] # first note of a sequence of 1 note
+#         choice = np.argmax(res)
+#         # if last notes are repeated identically 2 times
+#         if repeat(indexes + [choice]):
+#             choice = np.random.choice(range(n_vocab), p = res.ravel())
+#         indexes.append(choice)
+#         x = np.zeros((1, 1, n_vocab))
+#         x[0][0][choice] = 1
+#     return indexes
+
 # https://www.kaggle.com/danbrice/keras-plot-history-full-report-and-grid-search
 def plot_history(history):
-    loss_list = [s for s in history.history.keys() if 'loss' in s and 'val' not in s]
-    val_loss_list = [s for s in history.history.keys() if 'loss' in s and 'val' in s]
-    acc_list = [s for s in history.history.keys() if 'acc' in s and 'val' not in s]
-    val_acc_list = [s for s in history.history.keys() if 'acc' in s and 'val' in s]
-
+    loss_list = [s for s in history.history.keys() \
+                 if 'loss' in s]
+    # check loss
     if len(loss_list) == 0:
         print('Loss is missing in history')
         return
-
-    ## As loss always exists
+    # As loss always exists
     epochs = range(1,len(history.history[loss_list[0]]) + 1)
-
-    ## Loss
+    # Loss
     plt.figure(1)
     for l in loss_list:
-        plt.plot(epochs, history.history[l], 'b', label='Training loss (' + str(str(format(history.history[l][-1],'.5f'))+')'))
-    for l in val_loss_list:
-        plt.plot(epochs, history.history[l], 'g', label='Validation loss (' + str(str(format(history.history[l][-1],'.5f'))+')'))
-
+        plt.plot(epochs, history.history[l], 'b', label='Training loss (' \
+                 + str(format(history.history[l][-1],'.5f')) + ')')
+    # legend / axis
     plt.title('Loss')
     plt.xlabel('Epochs')
     plt.ylabel('Loss')
     plt.legend()
     plt.show()
 
-
-
 ################## MAIN ########################################################
 
 if __name__ == '__main__':
-    print("Import data from midi files found in the \"%s/\" directory" \
-           % MIDI_CORPUS_DIRECTORY)
-    file2notes = {}
-    try:
-        with open(NOTES_FILE, 'rb') as filepath:
-            file2notes = pickle.load(filepath)
-    except:
-        file2notes = get_notes(MIDI_CORPUS_DIRECTORY)
-        with open(NOTES_FILE, 'wb') as filepath:
-            pickle.dump(file2notes, filepath)
+    if len(argv) < 2:
+        print("usage: %s [train|generate]" % argv[0])
+    else:
+        if argv[1] == "train":
+            (vocab, file2elmt) = notes_to_dict()
+            n_vocab = len(vocab)
+            print("Convert data into onehot vector sequences to train the lstm network")
+            (X,Y) = prepare_sequences(file2elmt, n_vocab)
 
-    # debug
-    # f = next(iter(file2notes))
-    # print("Example of midi file: \"%s\"" % f)
-    # m21.converter.parse(f).flat.show()
-    # raw_input("Press Enter to continue...")
+            # # debug: show the 10 first element of vocabulary
+            # for i in range(10):
+            #     print("element %d : %s" % (i, vocab[i]))
 
-    print("Convert data into sequences to train the lstm network")
-    (allnotes, note2idx) = notes_to_dict(file2notes)
-    (X,Y) = prepare_sequences(file2notes, note2idx)
-    n_vocab = len(allnotes)
+            # # debug : retrieve elements index from onehot vectors and show the music
+            # print("Example of sequence:")
+            # seq = np.array(np.argmax(X[X.shape[0]/4,:,:], axis=-1))
+            # create_midi_stream(seq, vocab).show()
+            # raw_input("Press Enter to continue...")
 
-    # debug
-    # print("Example of sequence:")
-    # create_midi_stream(X[0,:,:], allnotes).show()
-    # raw_input("Press Enter to continue...")
+            # information about inputs and outputs of the network
+            print('Shape of X:', X.shape)
+            print('Number of training examples:', X.shape[0])
+            print('Length of sequence (Tx = X.shape[1]):', SEQ_LENGTH)
+            print('Total # of unique values (n_vocab = X.shape[2]):', n_vocab)
+            print('Shape of Y:', Y.shape)
 
-    print('Shape of X:', X.shape)
-    print('Number of training examples:', X.shape[0])
-    print('Length of sequence (Tx = X.shape[1]):', SEQ_LENGTH)
-    print('Total # of unique values (n_vocab = X.shape[2]):', n_vocab)
-    print('Shape of Y:', Y.shape)
+            # create the network model
+            print("Create the lstm network")
+            LSTM_cell, densor = create_layers()
+            model = create_model(n_vocab, LSTM_cell, densor)
+            try:
+                # try to load pre-trained weight from a previous IDENTICAL model
+                # (using same data)
+                print("Load weights from a pretrained model: %s" % WEIGHT_FILE)
+                model.load_weights(WEIGHT_FILE)
+            except:
+                print("Fail !")
 
-    print("Create the lstm network")
-    (model, densor, LSTM_cell) = create_model(X, n_vocab)
-    print("Train the lstm network")
-    history = train(model, X, Y)
-    print("Plot loss history")
-    plot_history(history)
+            print("Train the lstm network for %d epochs" % NB_EPOCHS)
+            history = train(model, X, Y)
+            print("Plot loss history")
+            plot_history(history)
+        else:
+            vocab = []
+            n_vocab = 0
+            densor = None
+            LSTM_cell = None
+            try:
+                print("Load vocabulary and music element indexes from %s" % VOCAB_FILE)
+                with open(VOCAB_FILE, 'rb') as filepath:
+                    (vocab, _) = pickle.load(filepath)
+                n_vocab = len(vocab)
+                print("Create a model to generate some music")
+                LSTM_cell, densor = create_layers()
+                inf_model = music_inference_model(LSTM_cell, densor, n_vocab, GEN_LENGTH)
+                print("Load weights from the pretrained model: %s"% WEIGHT_FILE)
+                inf_model.load_weights(WEIGHT_FILE)
+            except:
+                print("Missing informations... try to train the network first")
+                exit(1)
 
-    print("Generate some music")
-    inference_model = music_inference_model(LSTM_cell, densor, n_vocab, GEN_LENGTH)
-    x_init = np.zeros((1, 1, n_vocab))
-    # (a,b) = (np.random.randint(0, X.shape[0]), np.random.randint(0, X.shape[1]))
-    # x_init[0][0][:] = X[a][b][:]
-    x_init[0][0][X.shape[2]/2] = 1
-    a_init = np.zeros((1, HIDDEN_SIZE))
-    c_init = np.zeros((1, HIDDEN_SIZE))
-    prediction_output = inference_model.predict([x_init, a_init, c_init])
-    prediction_output = np.array([x_init] + [p[0] for p in prediction_output])
-    print prediction_output
-    midi_stream = create_midi_stream(prediction_output, allnotes)
-    midi_stream.write('midi', fp='midi_test_output.mid')
-
+            print("Generate some music")
+            for i, idx_init in enumerate([10,20,30]):
+                # generate music with argmax to chose the next note
+                x_init = np.zeros((1, 1, n_vocab))
+                x_init[0][0][idx_init] = 1
+                a_init = np.zeros((1, HIDDEN_SIZE))
+                c_init = np.zeros((1, HIDDEN_SIZE))
+                idx = predict_and_sample(inf_model, x_init, a_init, c_init)
+                midi_stream = create_midi_stream(idx, vocab)
+                midi_stream.write('midi', fp='midi_test_output_%d.mid' % i)
+                # use random choice according to distribution to avoid loops
+                idx = predict_and_sample2(LSTM_cell, densor, n_vocab, x_init, GEN_LENGTH)
+                midi_stream = create_midi_stream(idx, vocab)
+                midi_stream.write('midi', fp='midi_test_output_%d_bis.mid' % i)
 
