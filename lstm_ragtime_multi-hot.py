@@ -25,7 +25,7 @@ VOCAB_FILE = "data/vocab_mhe"
 # file name format to save pretrained network weights
 WEIGHT_FILE_FMT = "weight/weights-improvement-{epoch:02d}-{loss:.4f}_mhe.hdf5"
 # file name to load pretrained network weights
-WEIGHT_FILE = "weight/weights-improvement-200-18.9438_mhe.hdf5"
+WEIGHT_FILE = "weight/weights-improvement-200-0.2146_mhe.hdf5"
 
 # offset variation from one note to the next (1=quarter, 0.25=16th note)
 OFFSET_STEP = 0.25
@@ -37,7 +37,7 @@ HIDDEN_SIZE = 64
 NB_EPOCHS = 200
 
 # threshold to consider the note played (1) or not (0)
-THRESHOLD = 0.5
+THRESHOLD = 0
 # length of music generated
 GEN_LENGTH = 500
 
@@ -133,7 +133,7 @@ def notes_to_dict():
     return vocab, file2elmt
 
 def element2multihot(elmts, n_vocab):
-    v = [0 for i in range(n_vocab)]
+    v = [-1 for i in range(n_vocab)]
     for i in elmts: v[i] = 1
     return v
 
@@ -271,6 +271,7 @@ def train(model, X, Y):
 
 def multi_hot(x, n_vocab):
     x = K.greater(x, THRESHOLD)
+    x = x*2 - 1
     x = K.cast(x, "float32")
     x = RepeatVector(1)(x)
     return x
@@ -344,7 +345,8 @@ def predict_and_sample(inference_model, x_init, a_init, c_init):
     # Use your inference model to predict an output sequence
     pred = inference_model.predict([x_init, a_init, c_init])
     # Convert "pred" into an np.array() of indices lists with proba > THRESHOLD
-    idx = [[i for i,v in enumerate(p) if v] for p in np.greater(pred,THRESHOLD)]
+    idx = [[i for i,v in enumerate(p[0]) if v] for p in np.greater(pred,THRESHOLD)]
+    print("indexes=", idx)
     return idx
 
 
@@ -486,9 +488,9 @@ if __name__ == '__main__':
                 c_init = np.zeros((1, HIDDEN_SIZE))
                 idx = predict_and_sample(inf_model, x_init, a_init, c_init)
                 midi_stream = create_midi_stream(idx, vocab)
-                midi_stream.write('midi', fp='midi_test_output_%d.mid' % i)
+                midi_stream.write('midi', fp='midi_test_output_mhe_%d.mid' % i)
                 # use random choice according to distribution to avoid loops
-                idx = predict_and_sample2(LSTM_cell, densor, n_vocab, x_init, GEN_LENGTH)
-                midi_stream = create_midi_stream(idx, vocab)
-                midi_stream.write('midi', fp='midi_test_output_%d_bis.mid' % i)
+                # idx = predict_and_sample2(LSTM_cell, densor, n_vocab, x_init, GEN_LENGTH)
+                # midi_stream = create_midi_stream(idx, vocab)
+                # midi_stream.write('midi', fp='midi_test_output_%d_bis.mid' % i)
 
