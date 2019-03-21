@@ -25,7 +25,7 @@ VOCAB_FILE = "data/vocab_mhe"
 # file name format to save pretrained network weights
 WEIGHT_FILE_FMT = "weight/weights-improvement-{epoch:02d}-{loss:.4f}_mhe.hdf5"
 # file name to load pretrained network weights
-WEIGHT_FILE = "weight/weights-improvement-200-0.2146_mhe.hdf5"
+WEIGHT_FILE = "weight/weights-improvement-200-0.1969_mhe.hdf5"
 
 # offset variation from one note to the next (1=quarter, 0.25=16th note)
 OFFSET_STEP = 0.25
@@ -201,7 +201,7 @@ def create_midi_stream(prediction_output, vocab):
 
 def create_layers():
     LSTM_cell = LSTM(HIDDEN_SIZE, return_state = True)
-    densor = Dense(n_vocab, activation='sigmoid')
+    densor = Dense(n_vocab, activation='tanh')
     return LSTM_cell, densor
 
 def create_model(n_vocab, LSTM_cell, densor):
@@ -241,7 +241,7 @@ def create_model(n_vocab, LSTM_cell, densor):
     # Compile the model to be trained.
     # We will use Adam and a categorical cross-entropy loss.
     opt = Adam(lr=0.01, beta_1=0.9, beta_2=0.999, decay=0.01)
-    model.compile(optimizer=opt, loss='binary_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer=opt, loss='mean_squared_error', metrics=['accuracy'])
     return model
 
 
@@ -271,7 +271,8 @@ def train(model, X, Y):
 
 def multi_hot(x, n_vocab):
     x = K.greater(x, THRESHOLD)
-    x = x*2 - 1
+    x = Lambda(lambda x: x * 2 - 1)(x) # NO
+    # no method to do that, use 1 step LSTM instead predict_and_sample2()
     x = K.cast(x, "float32")
     x = RepeatVector(1)(x)
     return x
@@ -465,24 +466,24 @@ if __name__ == '__main__':
             n_vocab = 0
             densor = None
             LSTM_cell = None
-            try:
-                print("Load vocabulary and music element indexes from %s" % VOCAB_FILE)
-                with open(VOCAB_FILE, 'rb') as filepath:
-                    (vocab, _) = pickle.load(filepath)
-                n_vocab = len(vocab)
-                print("Create a model to generate some music")
-                LSTM_cell, densor = create_layers()
-                inf_model = music_inference_model(LSTM_cell, densor, n_vocab, GEN_LENGTH)
-                print("Load weights from the pretrained model: %s"% WEIGHT_FILE)
-                inf_model.load_weights(WEIGHT_FILE)
-            except:
-                print("Missing informations... try to train the network first")
-                exit(1)
+            # try:
+            print("Load vocabulary and music element indexes from %s" % VOCAB_FILE)
+            with open(VOCAB_FILE, 'rb') as filepath:
+                (vocab, _) = pickle.load(filepath)
+            n_vocab = len(vocab)
+            print("Create a model to generate some music")
+            LSTM_cell, densor = create_layers()
+            inf_model = music_inference_model(LSTM_cell, densor, n_vocab, GEN_LENGTH)
+            print("Load weights from the pretrained model: %s"% WEIGHT_FILE)
+            inf_model.load_weights(WEIGHT_FILE)
+            # except:
+            #     print("Missing informations... try to train the network first")
+            #     exit(1)
 
             print("Generate some music")
             for i, idx_init in enumerate([10,20,30]):
                 # generate music with argmax to chose the next note
-                x_init = np.zeros((1, 1, n_vocab))
+                x_init = np.zeros((1, 1, n_vocab)) - 1
                 x_init[0][0][idx_init] = 1
                 a_init = np.zeros((1, HIDDEN_SIZE))
                 c_init = np.zeros((1, HIDDEN_SIZE))
